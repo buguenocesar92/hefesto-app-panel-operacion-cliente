@@ -1,0 +1,45 @@
+# Imagen de la API (Laravel + PHP-FPM).
+#
+# Estado: este Dockerfile NO se ha construido. En el entorno donde se escribio
+# el panel no habia Docker ni PHP. Ver docs/10-PRUEBAS-Y-ESTADO.md.
+
+FROM php:8.3-fpm-alpine
+
+# Dependencias del sistema necesarias para PostgreSQL y Redis.
+RUN apk add --no-cache \
+        libpq-dev \
+        icu-dev \
+        oniguruma-dev \
+        $PHPIZE_DEPS \
+    && docker-php-ext-install -j"$(nproc)" pdo_pgsql pgsql bcmath intl opcache \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && apk del $PHPIZE_DEPS
+
+# El usuario www-data nunca debe ser root dentro del contenedor.
+RUN addgroup -g 1000 app && adduser -u 1000 -G app -s /bin/sh -D app
+
+WORKDIR /var/www/html
+
+# Dependencias primero: la capa de composer se reaprovecha mientras el
+# composer.json no cambie.
+COPY api/composer.json api/composer.lock* ./
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist --no-interaction
+
+COPY api/ ./
+
+RUN composer dump-autoload --optimize --no-dev \
+    && mkdir -p storage/framework/cache storage/framework/views storage/logs bootstrap/cache \
+    && chown -R app:app storage bootstrap/cache
+
+COPY deploy/php.ini /usr/local/etc/php/conf.d/panel.ini
+COPY deploy/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY deploy/entrypoint.api.sh /usr/local/bin/entrypoint
+RUN chmod +x /usr/local/bin/entrypoint
+
+USER app
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint"]
+CMD ["php", "-S", "0.0.0.0:8000", "-t", "public", "public/index.php"]

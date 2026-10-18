@@ -1,0 +1,131 @@
+# ---------------------------------------------------------------------------
+# Panel de Operacion del Cliente - desarrollo
+# ---------------------------------------------------------------------------
+# Stack completo en local: PostgreSQL, Redis, API Laravel y frontend Nuxt.
+#
+# Estado: este compose NO se ha ejecutado. En el entorno donde se escribio el
+# panel no habia Docker (ver docs/10-PRUEBAS-Y-ESTADO.md).
+#
+# Uso:
+#   docker compose -f deploy/compose.desarrollo.yaml --env-file .env up -d
+#   docker compose -f deploy/compose.desarrollo.yaml exec api php artisan migrate --seed
+#   docker compose -f deploy/compose.desarrollo.yaml exec api php artisan test
+# ---------------------------------------------------------------------------
+
+name: panel-operacion-cliente
+
+services:
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL.
+  #
+  # DOS ROLES, Y NO UNO
+  # -------------------
+  # `POSTGRES_USER` es el rol de ARRANQUE: la imagen oficial ejecuta
+  # `initdb --username="$POSTGRES_USER"` y ese rol nace superusuario. Solo
+  # se usa para crear la base y para las tareas administrativas. La
+  # aplicacion NUNCA conecta con el.
+  #
+  # El rol de la aplicacion (`DB_USERNAME`) lo crea
+  # `deploy/postgres/inicializar-rol.sh` al inicializar el volumen, con
+  # NOSUPERUSER y NOBYPASSRLS explicitos. Le da la propiedad de la base
+  # para que las migraciones de Laravel puedan crear el esquema.
+  #
+  # POR QUE IMPORTA: la documentacion de PostgreSQL 18 dice que los
+  # superusuarios "always bypass the row security system", y que
+  # `FORCE ROW LEVEL SECURITY` sujeta solo al DUENO de la tabla, no al
+  # superusuario. Con un solo rol las politicas no se aplicarian y el
+  # aislamiento entre empresas seria decorativo. Ver docs/03.
+  # -------------------------------------------------------------------------
+  postgres:
+    # Version fijada a nivel de version principal y menor. Fijar tambien el
+    # digest SHA del imagen es lo correcto para produccion, pero resolver
+    # digests requiere acceso al registro: queda pendiente (docs/04).
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-panel_operacion}
+      POSTGRES_USER: ${DB_ADMIN_USERNAME:-panel_operacion_admin}
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?falta DB_ADMIN_PASSWORD en el .env}
+      # Rol con el que conecta la aplicacion. Lo crea el script de arranque.
+      APP_DB_ROLE: ${DB_USERNAME:-panel_operacion}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en el .env}
+    volumes:
+      - postgres_datos:/var/lib/postgresql/data
+      - ./postgres/inicializar-rol.sh:/docker-entrypoint-initdb.d/inicializar-rol.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-panel_operacion} -d ${DB_DATABASE:-panel_operacion}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Sin puertos publicados: la base no se expone al host ni a la red externa.
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--requirepass", "${REDIS_PASSWORD:?falta REDIS_PASSWORD en el .env}"]
+    volumes:
+      - redis_datos:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?falta REDIS_PASSWORD en el .env}
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-produccion}
+      APP_KEY: ${APP_KEY:?falta-APP_KEY-ejecuta-php-artisan-key-generate}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      APP_URL: ${APP_URL:-http://localhost:8000}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-panel_operacion}
+      DB_USERNAME: ${DB_USERNAME:-panel_operacion}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en el .env}
+      CACHE_STORE: redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?falta REDIS_PASSWORD en el .env}
+      PANEL_INTEGRACIONES_ACTIVAS: ${PANEL_INTEGRACIONES_ACTIVAS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') ? 0 : 1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Puerto publicado solo en desarrollo, y solo en loopback.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    restart: unless-stopped
+    environment:
+      API_INTERNA: http://api:8000
+      NOMBRE_PANEL: ${NOMBRE_PANEL:-Panel de Operacion del Cliente}
+      NITRO_HOST: 0.0.0.0
+      NITRO_PORT: 3000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  postgres_datos:
+  redis_datos:

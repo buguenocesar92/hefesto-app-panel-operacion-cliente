@@ -1,0 +1,123 @@
+# ---------------------------------------------------------------------------
+# Panel de Operacion del Cliente - produccion
+# ---------------------------------------------------------------------------
+# Diferencias con el compose de desarrollo:
+#   - Ningun puerto publicado: el trafico entra por el proxy de Coolify o por
+#     el reverse proxy del servidor, no por un puerto abierto del host.
+#   - Se monta el codigo como volumen de solo lectura desde una ruta dedicada.
+#   - Las credenciales vienen del gestor de secretos del despliegue, no de un
+#     archivo .env en el servidor.
+#
+# Estado: este compose NO se ha ejecutado. Ver docs/10-PRUEBAS-Y-ESTADO.md.
+#
+# Uso (desde la carpeta del proyecto, con el .env de produccion):
+#   docker compose -f deploy/compose.produccion.yaml --env-file .env up -d
+# ---------------------------------------------------------------------------
+
+name: panel-operacion-cliente
+
+services:
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL.
+  #
+  # DOS ROLES, Y NO UNO
+  # -------------------
+  # `POSTGRES_USER` es el rol de ARRANQUE: la imagen oficial ejecuta
+  # `initdb --username="$POSTGRES_USER"` y ese rol nace superusuario. Solo
+  # se usa para crear la base y para las tareas administrativas. La
+  # aplicacion NUNCA conecta con el.
+  #
+  # El rol de la aplicacion (`DB_USERNAME`) lo crea
+  # `deploy/postgres/inicializar-rol.sh` al inicializar el volumen, con
+  # NOSUPERUSER y NOBYPASSRLS explicitos. Le da la propiedad de la base
+  # para que las migraciones de Laravel puedan crear el esquema.
+  #
+  # POR QUE IMPORTA: la documentacion de PostgreSQL 18 dice que los
+  # superusuarios "always bypass the row security system", y que
+  # `FORCE ROW LEVEL SECURITY` sujeta solo al DUENO de la tabla, no al
+  # superusuario. Con un solo rol las politicas no se aplicarian y el
+  # aislamiento entre empresas seria decorativo. Ver docs/03.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:?falta DB_DATABASE}
+      POSTGRES_USER: ${DB_ADMIN_USERNAME:-panel_operacion_admin}
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?falta DB_ADMIN_PASSWORD}
+      # Rol con el que conecta la aplicacion. Lo crea el script de arranque.
+      APP_DB_ROLE: ${DB_USERNAME:-panel_operacion}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+    volumes:
+      - postgres_datos:/var/lib/postgresql/data
+      - ./postgres/inicializar-rol.sh:/docker-entrypoint-initdb.d/inicializar-rol.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-panel_operacion} -d ${DB_DATABASE}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Sin `ports`: la base nunca se publica.
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "300", "1", "--requirepass", "${REDIS_PASSWORD:?falta REDIS_PASSWORD}"]
+    volumes:
+      - redis_datos:/data
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?falta REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: ${API_IMAGEN:-hefesto/panel-operacion-api:0.1.0}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: produccion
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL:?falta APP_URL}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      CACHE_STORE: redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?falta REDIS_PASSWORD}
+      PANEL_INTEGRACIONES_ACTIVAS: ${PANEL_INTEGRACIONES_ACTIVAS:-}
+    volumes:
+      - ./codigo/api:/var/www/html:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') ? 0 : 1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  web:
+    image: ${WEB_IMAGEN:-hefesto/panel-operacion-web:0.1.0}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_INTERNA: http://api:8000
+      NOMBRE_PANEL: ${NOMBRE_PANEL:-Panel de Operacion del Cliente}
+      NITRO_HOST: 0.0.0.0
+      NITRO_PORT: 3000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_datos:
+  redis_datos:

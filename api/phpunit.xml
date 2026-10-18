@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Suite "aislamiento": la prueba de que un cliente NO puede leer datos de
+    otra PyME. Es el requisito de seguridad numero uno del panel.
+
+    La suite usa SQLite en memoria para que las pruebas de API corran en
+    cualquier maquina. Las pruebas que dependen de las politicas RLS de
+    PostgreSQL se marcan como omitidas cuando el motor no es PostgreSQL:
+    nunca se declaran probadas si no se ejecutaron.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnRisky="true">
+    <testsuites>
+        <testsuite name="Unidad">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Caracteristicas">
+            <directory>tests/Feature</directory>
+        </testsuite>
+        <testsuite name="AISlamiento">
+            <directory>tests/Feature/Aislamiento</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <env name="BCRYPT_ROUNDS" value="4"/>
+        <env name="CACHE_STORE" value="array"/>
+        <env name="DB_CONNECTION" value="sqlite"/>
+        <env name="DB_DATABASE" value=":memory:"/>
+        <env name="MAIL_MAILER" value="array"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="array"/>
+        <env name="TELESCOPE_ENABLED" value="false"/>
+        <!-- Integraciones apagadas durante las pruebas: ninguna sale a la red. -->
+        <env name="PANEL_INTEGRACIONES_ACTIVAS" value=""/>
+    </php>
+</phpunit>

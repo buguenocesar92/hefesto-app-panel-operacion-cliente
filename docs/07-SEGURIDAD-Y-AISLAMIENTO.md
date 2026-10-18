@@ -267,10 +267,50 @@ política lo alcance. Un superusuario la saltearía siempre.
 
 ### Cómo se comprueba, y aquí hay una diferencia con las demás aplicaciones
 
-**El panel no tiene comando `verificar-aislamiento`.** No existe en
-`api/app/Console/Commands/`, que solo trae `panel:refrescar-cache`. No se
-inventó un nombre para llenar el hueco: la comprobación es manual y son tres
-consultas, que hay que correr con la misma credencial que usa la aplicación:
+Existe un comando:
+
+```
+php artisan panel:verificar-aislamiento
+```
+
+Revisa cinco cosas, en este orden:
+
+1. Que el rol de la conexión no sea superusuario ni tenga `BYPASSRLS`. Lo lee de
+   `pg_roles`, por `current_user`, y va **primero**. No depende de que haya datos:
+   contra una base recién instalada y vacía lo comprueba igual. Si el rol está
+   mal, el comando se detiene ahí y dice qué corregir y dónde está el patrón de
+   referencia (`apps/almacen/deploy/postgres/inicializar-rol.sh`).
+2. Que las cuatro tablas con `tenant_id` tengan RLS activada y forzada.
+3. Que cada una tenga su política, y que la política compare contra
+   `public.app_tenant_id()`, con `USING` y con `WITH CHECK`.
+4. Que `public.app_tenant_id()` exista y devuelva `null` sin empresa en el
+   contexto.
+5. Que una consulta sin empresa en el contexto devuelva cero filas.
+
+**La diferencia con las aplicaciones verticales: este comando no escribe nada.**
+El panel es de solo lectura —`index.php` rechaza todo lo que no sea GET, HEAD u
+OPTIONS, y `routes/api.php` no declara una sola ruta de escritura—, así que no
+crea filas temporales como hacen las verticales. Escribir acá significaría meter
+filas en tablas de clientes reales y romper el propio contrato del panel.
+
+Esa restricción tiene una consecuencia que el comando resuelve, en vez de
+ocultarla. Leer sin empresa en el contexto tiene que dar cero filas, pero ese
+cero es ambiguo: puede ser que la tabla esté vacía, o puede ser que la RLS esté
+funcionando y ocultando filas que sí existen. Por eso el punto 5 cuenta dos
+veces: una sin empresa en el contexto, que tiene que dar cero, y otra dentro del
+contexto de una empresa activa de verdad.
+
+- Si la segunda cuenta da filas, la tabla tiene datos y la RLS los está ocultando
+  sin empresa. Esa es la evidencia fuerte, y la que en las verticales da la
+  lectura cruzada con filas temporales.
+- Si la segunda cuenta da cero, la tabla está vacía y el comando lo avisa, porque
+  ahí la primera comprobación no prueba nada.
+
+Los puntos 1 a 4 leen el catálogo de PostgreSQL y no dependen de los datos: valen
+igual contra una base recién instalada y vacía.
+
+Si se prefiere hacer la comprobación a mano, son las siguientes consultas, con la
+misma credencial que usa la aplicación:
 
 ```sql
 -- 1. El rol de la conexión no puede ser superusuario ni saltar la RLS.
@@ -292,10 +332,14 @@ SELECT c.relname,
 SELECT public.app_tenant_id();
 ```
 
-La tercera es la que más dice: si devuelve un valor en vez de lanzar excepción,
-el aislamiento está abierto.
+La tercera es la que más dice: con la implementación actual devuelve `null`, y
+`null` no es igual a ningún `tenant_id`, así que la comparación da falso y la
+consulta no devuelve filas. Si devolviera un valor, el aislamiento está abierto.
 
-**Nada de esto se ha ejecutado.** En el equipo donde se escribió este cambio no
-había PostgreSQL ni Docker. El diseño es correcto y está sostenido en la
-documentación oficial, pero nadie lo ha corrido. Ver
+La tabla `tenants` y la vista `vw_tenants_publicos` quedan fuera a propósito, por
+lo que se explica en el punto 5 de este mismo documento.
+
+**Nada de esto se ha ejecutado.** En el equipo donde se escribió este comando no
+había PostgreSQL ni Docker, y no hay `php -l` para comprobar la sintaxis. El
+código se revisó a mano y no se declara probado. Ver
 [10-PRUEBAS-Y-ESTADO.md](10-PRUEBAS-Y-ESTADO.md).

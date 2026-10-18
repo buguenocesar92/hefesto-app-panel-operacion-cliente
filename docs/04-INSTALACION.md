@@ -122,6 +122,28 @@ O, mejor, con el cron del host:
 `withoutOverlapping()` evita que dos ejecuciones se pisen. La tarea no escribe
 en ningun sistema externo: solo refresca lo que el panel ya tiene cacheado.
 
+## Comprobar el aislamiento
+
+A diferencia de `panel:refrescar-cache`, este comando se corre **a mano**, una
+vez, después de instalar:
+
+```bash
+docker compose -f deploy/compose.produccion.yaml exec api \
+  php artisan panel:verificar-aislamiento
+```
+
+Revisa, en orden, que el rol de la conexión no sea superusuario ni tenga
+`BYPASSRLS`, que las cuatro tablas de clientes tengan RLS forzada, que sus
+políticas comparen contra `public.app_tenant_id()`, y que una consulta sin
+empresa en el contexto devuelva cero filas. El último punto cuenta las tablas dos
+veces, con y sin empresa en el contexto, para distinguir "la tabla está vacía" de
+"la RLS está ocultando datos".
+
+**No escribe nada**, a diferencia del verificador de las aplicaciones verticales:
+el panel es de solo lectura. Y **no se ha ejecutado nunca**: en el equipo donde
+se escribió no había PostgreSQL ni Docker. Ver
+[07-SEGURIDAD-Y-AISLAMIENTO.md](07-SEGURIDAD-Y-AISLAMIENTO.md).
+
 ## Diagnóstico
 
 | Sintoma | Causa probable |

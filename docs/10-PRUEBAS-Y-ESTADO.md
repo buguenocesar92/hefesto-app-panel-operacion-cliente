@@ -176,12 +176,18 @@ pendiente:
    declarado, y confirmar que el rol `panel_operacion` se crea sin error.
 2. Confirmar con `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles` que el
    rol de la conexión no es superusuario ni salta la RLS.
-3. Correr a mano las tres consultas de comprobación de la sección anterior,
-   porque esta aplicación **no tiene comando `verificar-aislamiento`**.
+3. Correr `php artisan panel:verificar-aislamiento`, que hace esa comprobación
+   del rol y las otras cuatro, y que **no escribe nada**: el panel es de solo
+   lectura y el comando lo respeta.
 4. Probar el escenario que motiva todo el cambio: una empresa viendo los
    agregados de otra.
 
-El punto 3 es una diferencia real con el resto de las aplicaciones de Hefesto y
-es el que más conviene no pasar por alto: aquí el aislamiento depende de que
-alguien mire. Lo único verificado es estático: `bash -n` pasa sobre el script y
-el `compose` es YAML válido, ambas cosas comprobadas por `tools/validar_apps.py`.
+El punto 3 es una diferencia real con el resto de las aplicaciones de Hefesto:
+allá el verificador crea filas temporales para probar la lectura cruzada y las
+borra al terminar, y acá eso no se puede hacer porque escribiría en tablas de
+clientes reales. El comando se limita a leer el catálogo de PostgreSQL y a
+contar. La consecuencia es que el conteo final solo es concluyente si las tablas
+tienen filas; el comando lo avisa cuando no las tienen. Lo único verificado aquí
+es estático: `bash -n` pasa sobre el script, el `compose` es YAML válido y los
+delimitadores del PHP se revisaron a mano, las tres cosas comprobadas por
+`tools/validar_apps.py` y una revisión manual, sin `php -l`.
